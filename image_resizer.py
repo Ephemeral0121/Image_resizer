@@ -55,6 +55,7 @@ class ImageResizer(QMainWindow):
         self.setWindowTitle('Image Resizer')
         self.setGeometry(100, 100, 600, 550)
         self.center()
+        self.setWindowIcon(QIcon('image_resizer_icon.ico'))
 
         centralWidget = QWidget(self)
         self.setCentralWidget(centralWidget)
@@ -70,6 +71,9 @@ class ImageResizer(QMainWindow):
         self.ratioComboBox = QComboBox(self)
         self.ratioComboBox.addItems(["1:1", "4:3", "16:9", "Custom"])
         layout.addWidget(self.ratioComboBox)
+
+        default_index = self.ratioComboBox.findText("16:9")
+        self.ratioComboBox.setCurrentIndex(default_index)
 
         self.customRatioWidget = QWidget(self)
         customLayout = QHBoxLayout(self.customRatioWidget)
