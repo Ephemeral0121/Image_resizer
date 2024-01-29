@@ -1,17 +1,23 @@
 from PyQt5 import QtWidgets, QtCore
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QListWidget, QFileDialog, QMessageBox, QVBoxLayout, QWidget, QProgressBar, QLabel, QComboBox, QLineEdit, QHBoxLayout, QStatusBar)
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QListWidget, QFileDialog,
+                              QMessageBox, QVBoxLayout, QWidget, QProgressBar, QLabel, QComboBox,
+                                QLineEdit, QHBoxLayout, QStatusBar, QButtonGroup, QRadioButton)
+from PyQt5.QtWidgets import QCheckBox
 from PyQt5.QtCore import Qt
-from PIL import Image
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QFont
 import sys
 import os
 import threading
+from PIL import Image
+import piexif
+import subprocess
 
-# Windows 작업 표시줄
+# Windows 작업 표시줄 지원
 try:
     from PyQt5.QtWinExtras import QWinTaskbarButton, QWinTaskbarProgress
 except ImportError:
     QWinTaskbarButton = None  # Windows가 아닌 경우 None으로 설정
+
 
 class DropArea(QWidget):
     def __init__(self, parent=None):
@@ -20,15 +26,21 @@ class DropArea(QWidget):
         self.layout = QVBoxLayout(self)
         self.label = QLabel("↓ Drag and Drop Files Here ↓", self)
         self.label.setAlignment(QtCore.Qt.AlignCenter)
-        self.label.setStyleSheet("color: #888;")
+        self.label.setFont(QFont('Arial', 14))
+        self.label.setStyleSheet("color: #aaa;")
         self.layout.addWidget(self.label)
         self.fileList = QListWidget(self)
+        self.fileList.setFont(QFont('Arial', 12))
         self.layout.addWidget(self.fileList)
         self.setStyleSheet("""
-            border: 2px dashed #888;
-            padding: 10px;
-            border-radius: 5px;
-            background-color: #f0f0f0;
+            DropArea {
+                border: 2px dashed #ccc;
+                border-radius: 10px;
+                background-color: #fafafa;
+            }
+            QListWidget {
+                border: none;
+            }
         """)
 
     def dragEnterEvent(self, event):
@@ -36,7 +48,7 @@ class DropArea(QWidget):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
-        self.fileList.clear() 
+        self.fileList.clear()  # Clear the existing list before adding new files
         for url in event.mimeData().urls():
             if url.isLocalFile():
                 self.fileList.addItem(url.toLocalFile())
@@ -45,6 +57,13 @@ class DropArea(QWidget):
 class ImageResizer(QMainWindow):
     updateProgress = QtCore.pyqtSignal(int)
     showCompleteMessage = QtCore.pyqtSignal()
+
+    def resource_path(self, relative_path):
+        try:
+            base_path = sys._MEIPASS
+        except Exception:
+            base_path = os.path.abspath(".")
+        return os.path.join(base_path, relative_path)
     
     def __init__(self):
         super().__init__()
@@ -57,59 +76,92 @@ class ImageResizer(QMainWindow):
         self.setWindowTitle('Image Resizer')
         self.setGeometry(100, 100, 800, 600)
         self.center()
-        self.setWindowIcon(QIcon('image_resizer_icon.ico'))
+        self.setWindowIcon(QIcon(self.resource_path("image_resizer_icon.png")))
 
         centralWidget = QWidget(self)
         self.setCentralWidget(centralWidget)
         layout = QVBoxLayout(centralWidget)
 
+        self.keepExifCheckbox = QCheckBox("Keep EXIF Data")
+        layout.addWidget(self.keepExifCheckbox)
+
         self.dropArea = DropArea()
         layout.addWidget(self.dropArea)
+        layout.setStretchFactor(self.dropArea, 3)  # 드래그 앤 드롭 영역의 비중을 늘립니다.
 
         self.openButton = QPushButton('Open Files')
         self.openButton.clicked.connect(self.openImages)
         layout.addWidget(self.openButton)
 
-        self.ratioComboBox = QComboBox(self)
-        self.ratioComboBox.addItems(["1:1", "4:3", "16:9", "Custom"])
-        layout.addWidget(self.ratioComboBox)
+        # Resolution options using radio buttons
+        self.resolutionLayout = QHBoxLayout()
+        self.resolutionGroup = QButtonGroup(self)
+        for ratio in ["1:1", "4:3", "16:9"]:
+            radioButton = QRadioButton(ratio)
+            self.resolutionGroup.addButton(radioButton)
+            self.resolutionLayout.addWidget(radioButton)
+            if ratio == "16:9":
+                radioButton.setChecked(True)  # Default selection
 
-        default_index = self.ratioComboBox.findText("16:9")
-        self.ratioComboBox.setCurrentIndex(default_index)
+        # Custom resolution option
+        self.customRadioButton = QRadioButton("Custom")  # self 추가
+        self.resolutionGroup.addButton(self.customRadioButton)
+        self.resolutionLayout.addWidget(self.customRadioButton)
+        layout.addLayout(self.resolutionLayout)
 
-        self.customRatioWidget = QWidget(self)
-        customLayout = QHBoxLayout(self.customRatioWidget)
-        self.widthInput = QLineEdit(self)
-        self.heightInput = QLineEdit(self)
-        customLayout.addWidget(QLabel("Width:"))
-        customLayout.addWidget(self.widthInput)
-        customLayout.addWidget(QLabel("Height:"))
-        customLayout.addWidget(self.heightInput)
-        layout.addWidget(self.customRatioWidget)
-        self.customRatioWidget.hide()
+        self.customRadioButton.toggled.connect(self.customRatioToggled)  # 여기에 연결
 
-        self.ratioComboBox.currentIndexChanged.connect(self.ratioChanged)
+        # Custom resolution inputs
+        self.customResolutionWidget = QWidget()  # 이 위젯을 통해 커스텀 입력 필드를 보여주거나 숨깁니다.
+        self.customResolutionLayout = QHBoxLayout(self.customResolutionWidget)
+        self.widthInput = QLineEdit()
+        self.heightInput = QLineEdit()
+        self.customResolutionLayout.addWidget(QLabel("Width:"))
+        self.customResolutionLayout.addWidget(self.widthInput)
+        self.customResolutionLayout.addWidget(QLabel("Height:"))
+        self.customResolutionLayout.addWidget(self.heightInput)
+        layout.addWidget(self.customResolutionWidget)
+        self.customResolutionWidget.setVisible(False)  # 초기 상태에서 숨김
+
 
         self.resizeButton = QPushButton('Resize Images')
         self.resizeButton.clicked.connect(self.resizeImages)
         layout.addWidget(self.resizeButton)
 
-        self.progressBar = QProgressBar(self)
+        self.progressBar = QProgressBar()
         layout.addWidget(self.progressBar)
 
-        self.statusBar = QStatusBar(self)
+        self.statusBar = QStatusBar()
         self.setStatusBar(self.statusBar)
 
         self.setStyle()
 
     def setStyle(self):
-        self.openButton.setStyleSheet("font-size: 16px; padding: 10px; background-color: #4285f4; color: white; border-radius: 5px;")
-        self.resizeButton.setStyleSheet("font-size: 16px; padding: 10px; background-color: #34a853; color: white; border-radius: 5px;")
-        self.progressBar.setStyleSheet("font-size: 16px; height: 20px; border-radius: 5px;")
-        self.customRatioWidget.setStyleSheet("font-size: 14px;")
-    
+        self.setStyleSheet("""
+            QPushButton {
+                background-color: #007AFF; color: white; border-radius: 5px; padding: 10px;
+            }
+            QPushButton:hover {
+                background-color: #357ae8;
+            }
+            QRadioButton {
+                font-size: 18px;
+            }
+            QLineEdit {
+                font-size: 14px; padding: 5px; border: 1px solid #cccccc; border-radius: 5px;
+            }
+            QProgressBar {
+                font-size: 14px; padding: 5px; border-radius: 5px; background-color: #f0f0f0; border: 1px solid #cccccc;
+            }
+            QProgressBar::chunk {
+                background-color: #4285f4; border-radius: 5px;
+            }
+        """)
+
+
     def showEvent(self, event):
         super().showEvent(event)
+        # Windows 작업 표시줄 진행 상태 표시
         if QWinTaskbarButton:
             self.taskbarButton = QWinTaskbarButton(self)
             self.taskbarButton.setWindow(self.windowHandle())
@@ -123,7 +175,7 @@ class ImageResizer(QMainWindow):
         self.move(qr.topLeft())
 
     def openImages(self):
-        self.dropArea.fileList.clear()  # Clear the existing list
+        self.dropArea.fileList.clear()
         filePaths, _ = QFileDialog.getOpenFileNames(self, "Open Images", "", "Image files (*.jpg *.jpeg *.png)")
         for filePath in filePaths:
             self.dropArea.fileList.addItem(filePath)
@@ -150,9 +202,11 @@ class ImageResizer(QMainWindow):
             self.resizeThread = threading.Thread(target=self.performResizing, args=(ratio,))
             self.resizeThread.start()
 
+    def customRatioToggled(self, checked):
+        self.customResolutionWidget.setVisible(checked)  # 커스텀 비율 입력 위젯의 가시성을 변경
+
     def getRatio(self):
-        ratioText = self.ratioComboBox.currentText()
-        if ratioText == "Custom":
+        if self.customRadioButton.isChecked():  # 여기를 수정
             try:
                 width = int(self.widthInput.text())
                 height = int(self.heightInput.text())
@@ -162,8 +216,11 @@ class ImageResizer(QMainWindow):
             except ValueError:
                 return None
         else:
-            width, height = map(int, ratioText.split(':'))
-            return width, height
+            selectedButton = self.resolutionGroup.checkedButton()
+            if selectedButton:
+                ratioText = selectedButton.text()
+                width, height = map(int, ratioText.split(':'))
+                return width, height
 
     def performResizing(self, ratio):
         total_files = self.dropArea.fileList.count()
@@ -173,35 +230,57 @@ class ImageResizer(QMainWindow):
                 self.statusBar().showMessage("Image size too small for selected ratio.", 5000)
                 continue
             progress = int((index + 1) / total_files * 100)
-            self.updateProgress.emit(progress) 
+            self.updateProgress.emit(progress)
         self.showCompleteMessage.emit()
 
     def resizeImage(self, filePath, ratio):
-        with Image.open(filePath) as img:
-            width, height = img.size
-            new_width, new_height = self.calculateNewSize(width, height, ratio)
+        try:
+            with Image.open(filePath) as img:
+                original_width, original_height = img.size
+                target_width, target_height = ratio
 
-            if new_width > width or new_height > height:
-                return False
+                # 새로운 크기 계산
+                new_width, new_height = self.calculateNewSize(original_width, original_height, ratio)
 
-            left = (width - new_width) // 2
-            top = (height - new_height) // 2
-            right = (width + new_width) // 2
-            bottom = (height + new_height) // 2
+                # 중앙에서 크롭할 위치 계산
+                left = (original_width - new_width) // 2
+                top = (original_height - new_height) // 2
+                right = left + new_width
+                bottom = top + new_height
 
-            cropped_img = img.crop((left, top, right, bottom))
-            base, ext = os.path.splitext(filePath)
-            new_file_path= f"{base}_resized{ext}"
-            cropped_img.save(new_file_path)
-            return True
-        
+                # 이미지 크롭 및 리사이징
+                cropped_img = img.crop((left, top, right, bottom))
+
+                # 리사이징된 이미지 저장
+                base, ext = os.path.splitext(filePath)
+                resized_file_path = f"{base}_resized{ext}"
+                cropped_img.save(resized_file_path)
+
+                # Keep EXIF Data 체크박스가 체크되어 있으면 exiftool을 사용하여 메타데이터 복사
+                if self.keepExifCheckbox.isChecked():
+                    exiftool_cmd = f'exiftool -TagsFromFile "{filePath}" -all:all -overwrite_original "{resized_file_path}"'
+                    subprocess.run(exiftool_cmd, shell=True, check=True)
+
+                return True
+        except Exception as e:
+            print(f"Error resizing and cropping image with EXIF preservation: {e}")
+            return False
+
+
     def calculateNewSize(self, width, height, ratio):
         target_width, target_height = ratio
-        new_width = width
-        new_height = int(width * target_height / target_width)
-        if new_height > height:
+        aspect_ratio = width / height
+        target_aspect_ratio = target_width / target_height
+
+        if aspect_ratio > target_aspect_ratio:
+            # 원본이 더 넓은 경우
+            new_width = int(height * target_aspect_ratio)
             new_height = height
-            new_width = int(height * target_width / target_height)
+        else:
+            # 원본이 더 높은 경우
+            new_width = width
+            new_height = int(width / target_aspect_ratio)
+
         return new_width, new_height
 
     @QtCore.pyqtSlot(int)
