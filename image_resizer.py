@@ -2,6 +2,7 @@ from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QListWidget, QFileDialog, QMessageBox, QVBoxLayout, QWidget, QProgressBar, QLabel, QComboBox, QLineEdit, QHBoxLayout, QStatusBar)
 from PyQt5.QtCore import Qt
 from PIL import Image
+from PyQt5.QtGui import QIcon
 import sys
 import os
 import threading
@@ -17,14 +18,15 @@ class DropArea(QWidget):
         super(DropArea, self).__init__(parent)
         self.setAcceptDrops(True)
         self.layout = QVBoxLayout(self)
-        self.label = QLabel("Drag and Drop Files Here", self)
+        self.label = QLabel("↓ Drag and Drop Files Here ↓", self)
         self.label.setAlignment(QtCore.Qt.AlignCenter)
-        self.label.setStyleSheet("color: #aaa; font-style: italic;")
+        self.label.setStyleSheet("color: #888;")
         self.layout.addWidget(self.label)
         self.fileList = QListWidget(self)
         self.layout.addWidget(self.fileList)
         self.setStyleSheet("""
-            border: 2px dashed #aaa;
+            border: 2px dashed #888;
+            padding: 10px;
             border-radius: 5px;
             background-color: #f0f0f0;
         """)
@@ -34,7 +36,7 @@ class DropArea(QWidget):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
-        self.fileList.clear()  # Clear the existing list before adding new files
+        self.fileList.clear() 
         for url in event.mimeData().urls():
             if url.isLocalFile():
                 self.fileList.addItem(url.toLocalFile())
@@ -53,7 +55,7 @@ class ImageResizer(QMainWindow):
 
     def initUI(self):
         self.setWindowTitle('Image Resizer')
-        self.setGeometry(100, 100, 600, 550)
+        self.setGeometry(100, 100, 800, 600)
         self.center()
         self.setWindowIcon(QIcon('image_resizer_icon.ico'))
 
@@ -171,7 +173,7 @@ class ImageResizer(QMainWindow):
                 self.statusBar().showMessage("Image size too small for selected ratio.", 5000)
                 continue
             progress = int((index + 1) / total_files * 100)
-            self.updateProgress.emit(progress)  # Update progress bar in main thread
+            self.updateProgress.emit(progress) 
         self.showCompleteMessage.emit()
 
     def resizeImage(self, filePath, ratio):
